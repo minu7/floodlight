@@ -13,7 +13,7 @@ public class NFChainingWebRoutable implements RestletRoutable {
   @Override
   public Restlet getRestlet(Context context) {
       Router router = new Router(context);
-      router.attach("/nf", NFChainingResource.class);
+      router.attach("/nf", NFResource.class);
       router.attach("/define", NFChainingResource.class);
       router.attach("/associate", NFChainingResource.class);
       return router;

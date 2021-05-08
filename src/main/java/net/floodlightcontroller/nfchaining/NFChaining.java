@@ -5,22 +5,34 @@ import java.util.HashMap;
 import java.util.Map;
  
 import org.projectfloodlight.openflow.protocol.OFMessage;
+import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.OFType;
+import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.IPv4Address;
+import org.projectfloodlight.openflow.types.IPv6Address;
 import org.projectfloodlight.openflow.types.MacAddress;
- 
+import org.projectfloodlight.openflow.types.OFPort;
+import org.projectfloodlight.openflow.types.VlanVid;
+
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
+import net.floodlightcontroller.core.internal.IOFSwitchService;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.devicemanager.IDevice;
+import net.floodlightcontroller.devicemanager.IDeviceService;
+import net.floodlightcontroller.devicemanager.internal.DeviceManagerImpl;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import java.util.ArrayList;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.Set;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;
+import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.topology.ITopologyService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,11 +42,16 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
    
     protected IFloodlightProviderService floodlightProvider;
     protected IRestApiService restApiService;
-    protected Set<Long> macAddresses;
+    protected IOFSwitchService switchService;
+    protected ITopologyService topology;
+    protected IRoutingService routing;
+    protected IDeviceService deviceManager;
+
     protected static Logger logger = LoggerFactory.getLogger(NFChaining.class);
+    
+    protected ArrayList<String> switches = new ArrayList<>();
     protected ArrayList<NFChain> nfChains = new ArrayList<>();
     protected Map<String, String> nfSwitch = new HashMap<>();
-    
 
     @Override
     public String getName() {
@@ -75,14 +92,22 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         l.add(IFloodlightProviderService.class);
         l.add(IRestApiService.class);
         l.add(INFChainingREST.class); 
+        l.add(IOFSwitchService.class);
+        l.add(ITopologyService.class); // topology forse non serve
+        l.add(IRoutingService.class);
+        l.add(IDeviceService.class);
         return l;
     }
  
     @Override
     public void init(FloodlightModuleContext context) throws FloodlightModuleException {
         floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
-        macAddresses = new ConcurrentSkipListSet<Long>();
         restApiService = context.getServiceImpl(IRestApiService.class);
+        switchService = context.getServiceImpl(IOFSwitchService.class);
+        topology = context.getServiceImpl(ITopologyService.class);
+        routing = context.getServiceImpl(IRoutingService.class);
+        deviceManager = context.getServiceImpl(IDeviceService.class);
+        
         restApiService.addRestletRoutable(new NFChainingWebRoutable());
     }
  
@@ -95,17 +120,9 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
  
     @Override
     public net.floodlightcontroller.core.IListener.Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
-        Ethernet eth =
-                IFloodlightProviderService.bcStore.get(cntx,
-                                            IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
- 
-        Long sourceMACHash = eth.getSourceMACAddress().getLong();
-        if (!macAddresses.contains(sourceMACHash)) {
-            macAddresses.add(sourceMACHash);
-            logger.info("MAC Address: {} seen on switch: {}",
-                eth.getSourceMACAddress().toString(),
-                sw.getId().toString());
-        }
+     
+        // per adesso non ci serve fare niente qua
+        // valutare se togliere metodo e interfaccia
         return Command.CONTINUE;
     }
 
@@ -117,7 +134,11 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
             // non si può sovrascrivere per adesso
             return null;
         }
-        nfSwitch.put(nf, sw); // TODO: trovare modo per fare validazione switch (esiste lo switch immesso?)
+        DatapathId dpid = DatapathId.of(sw);
+        if (switchService.getSwitch(dpid) == null) {
+            return null;
+        }
+        nfSwitch.put(nf, sw);
         return nfSwitch;
     }
 
@@ -132,13 +153,58 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         return nfChains.size() - 1;
     }
 
+    private IDevice getDeviceByIp(IPv4Address ip) {
+        Collection<? extends IDevice> allDevices = deviceManager.getAllDevices();
+
+        for (IDevice d : allDevices) {
+            for (int j = 0; j < d.getIPv4Addresses().length; j++) {
+                if (d.getIPv4Addresses()[j].equals(ip)) {
+                    return d;
+                }
+            }
+        } 
+        return null;
+    }
     @Override
     public boolean associatePathToNFChain(String sourceIp, String destIp, int nfChainId) {
         // qui bisogna fare l'effettiva implementazione dei percorsi negli switch
-        try {
+        try { // no check in ip for now, perchè il controller per vedere tutti gli ip la cosa più veloce è fare un pingall
             NFChain c = nfChains.get(nfChainId);
-            logger.info("OK GET");
-            return c.setPath(sourceIp, destIp);
+            logger.info("prima del getSouceIp");
+            if (!c.getSouceIp().isEmpty()) {
+                // questa path è stata già configurata oppuew
+                return false;
+            }
+            logger.info("ok subito dopo source ip");
+            logger.info("source ip = " + sourceIp);
+            logger.info(IPv4Address.of(sourceIp).toString());
+            
+            // IDevice source = deviceManager.findDevice(MacAddress.NONE, VlanVid.ZERO, IPv4Address.of(sourceIp), IPv6Address.NONE, DatapathId.NONE, OFPort.ZERO);
+            // IDevice dest = deviceManager.findDevice(MacAddress.NONE, VlanVid.ZERO, IPv4Address.of(destIp), IPv6Address.NONE, DatapathId.NONE, OFPort.ZERO);
+            // la funzione sopra non va, forse vuole più parametri (anche se nel codice direbbe di no, comunque anche gli altri moduli non la usano)
+            
+            // IMPORTANT: ricordarsi di fare un pingall (magari qui da codice per sicurezza)
+
+            IDevice source = this.getDeviceByIp(IPv4Address.of(sourceIp));
+            IDevice dest = this.getDeviceByIp(IPv4Address.of(destIp));
+
+            logger.info("ok fino qui");
+            if (source == null) {
+                logger.info("SOURCE DEVICE NOT FOUND");
+                return false;
+            }
+
+            if (dest == null) {
+                logger.info("DEST DEVICE NOT FOUND");
+                return false;
+            }
+
+            logger.info(source.toString());
+            logger.info(dest.toString());
+            
+
+            c.setPath(sourceIp, destIp);
+            return true;
         } catch (Exception e) {
             logger.info("EXCEPTION");
             logger.error(e.getMessage());

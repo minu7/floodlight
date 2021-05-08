@@ -12,8 +12,17 @@
 			"request": {
 				"url": "localhost:8080/wm/nfchain/nf",
 				"method": "POST",
-				"header": [],
-				"body": {},
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"description": ""
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"nf\": \"firewall2\",\n\t\"sw\": \"00:00:00:00:00:00:00:03\"\n}"
+				},
 				"description": ""
 			},
 			"response": []
@@ -22,9 +31,18 @@
 			"name": "Define",
 			"request": {
 				"url": "localhost:8080/wm/nfchain/define",
-				"method": "PUT",
-				"header": [],
-				"body": {},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"description": ""
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"chain\": [\"firewall2\", \"firewall2\"]\n}"
+				},
 				"description": ""
 			},
 			"response": []
@@ -34,6 +52,58 @@
 			"request": {
 				"url": "localhost:8080/wm/nfchain/associate",
 				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"description": ""
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"sourceIp\": \"10.0.0.1\",\n\t\"destIp\": \"10.0.0.3\",\n\t\"nfChainId\": 0\n}"
+				},
+				"description": ""
+			},
+			"response": []
+		},
+		{
+			"name": "List of switches",
+			"request": {
+				"url": "localhost:8080/wm/core/controller/switches/json",
+				"method": "GET",
+				"header": [],
+				"body": {},
+				"description": ""
+			},
+			"response": []
+		},
+		{
+			"name": "Check if ip exists",
+			"request": {
+				"url": {
+					"raw": "http://localhost:8080/wm/device/?ipv4=10.0.0.1",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"wm",
+						"device",
+						""
+					],
+					"query": [
+						{
+							"key": "ipv4",
+							"value": "10.0.0.1",
+							"equals": true,
+							"description": ""
+						}
+					],
+					"variable": []
+				},
+				"method": "GET",
 				"header": [],
 				"body": {},
 				"description": ""

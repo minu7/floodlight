@@ -11,6 +11,10 @@ public class NFChain {
         this.destIp = "";
     }
 
+    public String[] getChain() {
+        return this.chain;
+    }
+
     public boolean setPath(String sourceIp, String destIp) {
         if (!this.sourceIp.isEmpty()) {
            return false;

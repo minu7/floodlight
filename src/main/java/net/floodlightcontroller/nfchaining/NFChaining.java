@@ -1,16 +1,25 @@
 package net.floodlightcontroller.nfchaining;
  
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
- 
+
+import org.projectfloodlight.openflow.protocol.OFFlowAdd;
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.OFType;
+import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.action.OFActionOutput;
+import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IPv6Address;
 import org.projectfloodlight.openflow.types.MacAddress;
+import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.VlanVid;
 
@@ -22,8 +31,10 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.devicemanager.IDeviceService;
+import net.floodlightcontroller.devicemanager.SwitchPort;
 import net.floodlightcontroller.devicemanager.internal.DeviceManagerImpl;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import java.util.ArrayList;
@@ -32,7 +43,10 @@ import java.util.Set;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.restserver.IRestApiService;
 import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.routing.Path;
+import net.floodlightcontroller.staticentry.IStaticEntryPusherService;
 import net.floodlightcontroller.topology.ITopologyService;
+import net.floodlightcontroller.util.FlowModUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,7 +65,7 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
     
     protected ArrayList<String> switches = new ArrayList<>();
     protected ArrayList<NFChain> nfChains = new ArrayList<>();
-    protected Map<String, String> nfSwitch = new HashMap<>();
+    protected Map<String, DatapathId> nfSwitch = new HashMap<>();
 
     @Override
     public String getName() {
@@ -96,6 +110,7 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         l.add(ITopologyService.class); // topology forse non serve
         l.add(IRoutingService.class);
         l.add(IDeviceService.class);
+        l.add(IStaticEntryPusherService.class);
         return l;
     }
  
@@ -127,7 +142,7 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
     }
 
     @Override
-    public Map<String, String> associateNfSwitch(String nf, String sw) {
+    public Map<String, DatapathId> associateNfSwitch(String nf, String sw) {
         if (nfSwitch.containsKey(nf)) {
             // per semplicità per adesso i comandi che ritornano vuoto anzichè il contenuto 
             // sono usati per errore
@@ -138,7 +153,7 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         if (switchService.getSwitch(dpid) == null) {
             return null;
         }
-        nfSwitch.put(nf, sw);
+        nfSwitch.put(nf, dpid);
         return nfSwitch;
     }
 
@@ -148,6 +163,9 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
             if (!nfSwitch.containsKey(nf)) {
                 return -1; // se la nf non è associata a nessuno switch ritorno -1 come errore
             }
+        }
+        if (nfChain.length == 0) {
+            return -1;
         }
         nfChains.add(new NFChain(nfChain));
         return nfChains.size() - 1;
@@ -165,19 +183,39 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         } 
         return null;
     }
+
+    private void setFlowToSwitch(DatapathId nodeId, OFPort portNumberOutput, IPv4Address srcIp, IPv4Address destIp) {
+        IOFSwitch sw = switchService.getActiveSwitch(nodeId);
+        OFFlowAdd.Builder fmb = sw.getOFFactory().buildFlowAdd();
+        fmb.setBufferId(OFBufferId.NO_BUFFER)
+            .setPriority(FlowModUtils.PRIORITY_MAX);
+        
+        Match.Builder mb = sw.getOFFactory().buildMatch();
+        mb.setExact(MatchField.ETH_TYPE, EthType.IPv4) // senza questo da errore
+            .setExact(MatchField.IPV4_SRC, srcIp)
+            .setExact(MatchField.IPV4_DST, destIp);
+            
+        
+        OFActionOutput.Builder actionBuilder = sw.getOFFactory().actions().buildOutput();
+
+        actionBuilder.setPort(portNumberOutput);
+
+        fmb.setActions(Collections.singletonList((OFAction) actionBuilder.build()));
+        fmb.setMatch(mb.build());
+
+        sw.write(fmb.build());
+    }
+
+    // l'editor vorrebbe che spezzassi questa funzione
     @Override
     public boolean associatePathToNFChain(String sourceIp, String destIp, int nfChainId) {
         // qui bisogna fare l'effettiva implementazione dei percorsi negli switch
         try { // no check in ip for now, perchè il controller per vedere tutti gli ip la cosa più veloce è fare un pingall
             NFChain c = nfChains.get(nfChainId);
-            logger.info("prima del getSouceIp");
             if (!c.getSouceIp().isEmpty()) {
                 // questa path è stata già configurata oppuew
                 return false;
             }
-            logger.info("ok subito dopo source ip");
-            logger.info("source ip = " + sourceIp);
-            logger.info(IPv4Address.of(sourceIp).toString());
             
             // IDevice source = deviceManager.findDevice(MacAddress.NONE, VlanVid.ZERO, IPv4Address.of(sourceIp), IPv6Address.NONE, DatapathId.NONE, OFPort.ZERO);
             // IDevice dest = deviceManager.findDevice(MacAddress.NONE, VlanVid.ZERO, IPv4Address.of(destIp), IPv6Address.NONE, DatapathId.NONE, OFPort.ZERO);
@@ -188,7 +226,6 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
             IDevice source = this.getDeviceByIp(IPv4Address.of(sourceIp));
             IDevice dest = this.getDeviceByIp(IPv4Address.of(destIp));
 
-            logger.info("ok fino qui");
             if (source == null) {
                 logger.info("SOURCE DEVICE NOT FOUND");
                 return false;
@@ -199,9 +236,61 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
                 return false;
             }
 
-            logger.info(source.toString());
-            logger.info(dest.toString());
+            SwitchPort srcSwitch = null;
+            SwitchPort destSwitch = null;
+            Integer tmpPathLength = null;
+
+            // scegliere dal primo host il miglior switch verso la prima nf
+            DatapathId firstNf = nfSwitch.get(c.getChain()[0]);
+            for (SwitchPort  s : source.getAttachmentPoints()) {
+                Path p = routing.getPath(s.getNodeId(), firstNf); // vedere dove è localizzata la prima nf rispetto src
+                if (tmpPathLength == null || p.getHopCount() < tmpPathLength) {
+                    tmpPathLength = p.getHopCount();
+                    srcSwitch = s;
+                }
+            }
+            if (srcSwitch == null) {
+                return false;
+            }
             
+            tmpPathLength = null;
+            DatapathId lastNf = nfSwitch.get(c.getChain()[c.getChain().length - 1]); // last NF
+            for (SwitchPort  s : dest.getAttachmentPoints()) {
+                Path p = routing.getPath(s.getNodeId(), lastNf); // vedere dove è localizzata l'ultima nf rispetto dest
+                if (tmpPathLength == null || p.getHopCount() < tmpPathLength) {
+                    tmpPathLength = p.getHopCount();
+                    destSwitch = s;
+                }
+            }
+            if (destSwitch == null) {
+                return false;
+            }
+            
+            DatapathId switchBefore = srcSwitch.getNodeId();
+            for (String nf : c.getChain()) {
+                DatapathId sw = nfSwitch.get(nf);
+                Path p = routing.getPath(switchBefore, sw);
+                logger.info("path " + nf);
+                List<NodePortTuple> path = p.getPath();
+                for (int i = 0; i < path.size(); i+=2) {
+                    // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
+                    // noi dobbiamo modificare la table di partenza
+                    NodePortTuple node = path.get(i);
+                    logger.info(node.toString());
+                    this.setFlowToSwitch(node.getNodeId(), node.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+                }
+                switchBefore = sw;
+            }
+            Path p = routing.getPath(switchBefore, destSwitch.getNodeId());
+            logger.info("path 'finale'");
+            List<NodePortTuple> path = p.getPath();
+            for (int i = 0; i < path.size(); i+=2) {
+                // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
+                // noi dobbiamo modificare la table di partenza
+                NodePortTuple node = path.get(i);
+                logger.info(node.toString());
+                this.setFlowToSwitch(node.getNodeId(), node.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+            }
 
             c.setPath(sourceIp, destIp);
             return true;

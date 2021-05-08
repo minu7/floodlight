@@ -2,6 +2,7 @@ package net.floodlightcontroller.nfchaining;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.Map.Entry;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -35,7 +36,15 @@ public class NFResource extends ServerResource {
             String nf = root.get("nf").asText();
             String sw = root.get("sw").asText();
             
-            return nfChainingService.associateNfSwitch(nf, sw);
+            // non fa un bel to string in automatico, così viene il dpid in modo capibile, direttamente no
+            Map<String, DatapathId> map = nfChainingService.associateNfSwitch(nf, sw);
+            Map<String, String> res = new HashMap<>();
+
+            for (Map.Entry<String, DatapathId> m : map.entrySet()) {
+              res.put(m.getKey(), m.getValue().toString());
+            }
+            return res;
+
         } catch (IOException e) {
             e.printStackTrace();
         }           

@@ -206,6 +206,70 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
         sw.write(fmb.build());
     }
 
+    private SwitchPort getBestAttachmentSwitch(IDevice host, DatapathId firstSwitchChain) {
+        Integer tmpPathLength = null;
+        SwitchPort sw = null;
+        for (SwitchPort  s : host.getAttachmentPoints()) {
+            Path p = routing.getPath(s.getNodeId(), firstSwitchChain); // vedere dove è localizzata la prima nf rispetto src
+            if (tmpPathLength == null || p.getHopCount() < tmpPathLength) {
+                tmpPathLength = p.getHopCount();
+                sw = s;
+            }
+        }
+        return sw;
+    }
+
+    private boolean isSwithInFlow(List<NodePortTuple> flow, NodePortTuple n) {
+        for (NodePortTuple node : flow) {
+            if (node.getNodeId().equals(n.getNodeId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    private List<NodePortTuple> getFullPath(SwitchPort srcSwitch, SwitchPort destSwitch, NFChain chain) {
+        DatapathId switchBefore = srcSwitch.getNodeId();
+        List<NodePortTuple> flow = new ArrayList<>();
+
+        for (String nf : chain.getChain()) {
+            DatapathId sw = nfSwitch.get(nf);
+
+            Path p = routing.getPath(switchBefore, sw);
+            logger.info("path " + nf);
+            List<NodePortTuple> path = p.getPath();
+            for (int i = 0; i < path.size(); i+=2) {
+                // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
+                // noi dobbiamo modificare la table di partenza
+                NodePortTuple node = path.get(i);
+                logger.info(node.toString());
+                if (this.isSwithInFlow(flow, node) || node.getNodeId().equals(destSwitch.getNodeId())) {
+                    logger.info("node {} already exists in path", node);
+                    return new ArrayList<>();
+                }
+                flow.add(node);
+            }
+            switchBefore = sw;
+        }
+
+        Path p = routing.getPath(switchBefore, destSwitch.getNodeId());
+        logger.info("path 'finale'");
+        List<NodePortTuple> path = p.getPath();
+        for (int i = 0; i < path.size(); i+=2) {
+            // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
+            // noi dobbiamo modificare la table di partenza
+            NodePortTuple node = path.get(i);
+            logger.info(node.toString());
+            if (this.isSwithInFlow(flow, node) || node.getNodeId().equals(destSwitch.getNodeId())) {
+                logger.info("node {} already exists in path", node);
+                return new ArrayList<>();
+            }
+            flow.add(node);
+        }
+        return flow;
+    }
+
     // l'editor vorrebbe che spezzassi questa funzione
     @Override
     public boolean associatePathToNFChain(String sourceIp, String destIp, int nfChainId) {
@@ -238,58 +302,33 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
 
             SwitchPort srcSwitch = null;
             SwitchPort destSwitch = null;
-            Integer tmpPathLength = null;
 
             // scegliere dal primo host il miglior switch verso la prima nf
             DatapathId firstNf = nfSwitch.get(c.getChain()[0]);
-            for (SwitchPort  s : source.getAttachmentPoints()) {
-                Path p = routing.getPath(s.getNodeId(), firstNf); // vedere dove è localizzata la prima nf rispetto src
-                if (tmpPathLength == null || p.getHopCount() < tmpPathLength) {
-                    tmpPathLength = p.getHopCount();
-                    srcSwitch = s;
-                }
-            }
-            if (srcSwitch == null) {
+            srcSwitch = this.getBestAttachmentSwitch(source, firstNf);
+
+            DatapathId lastNf = nfSwitch.get(c.getChain()[c.getChain().length - 1]);
+            destSwitch = this.getBestAttachmentSwitch(dest, lastNf);
+
+            if (srcSwitch == null || destSwitch == null) {
                 return false;
             }
             
-            tmpPathLength = null;
-            DatapathId lastNf = nfSwitch.get(c.getChain()[c.getChain().length - 1]); // last NF
-            for (SwitchPort  s : dest.getAttachmentPoints()) {
-                Path p = routing.getPath(s.getNodeId(), lastNf); // vedere dove è localizzata l'ultima nf rispetto dest
-                if (tmpPathLength == null || p.getHopCount() < tmpPathLength) {
-                    tmpPathLength = p.getHopCount();
-                    destSwitch = s;
-                }
-            }
-            if (destSwitch == null) {
+            List<NodePortTuple> flow = this.getFullPath(srcSwitch, destSwitch, c);
+            if (flow.isEmpty()) {
                 return false;
             }
             
-            DatapathId switchBefore = srcSwitch.getNodeId();
-            for (String nf : c.getChain()) {
-                DatapathId sw = nfSwitch.get(nf);
-                Path p = routing.getPath(switchBefore, sw);
-                logger.info("path " + nf);
-                List<NodePortTuple> path = p.getPath();
-                for (int i = 0; i < path.size(); i+=2) {
-                    // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
-                    // noi dobbiamo modificare la table di partenza
-                    NodePortTuple node = path.get(i);
-                    logger.info(node.toString());
-                    this.setFlowToSwitch(node.getNodeId(), node.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
-                }
-                switchBefore = sw;
-            }
-            Path p = routing.getPath(switchBefore, destSwitch.getNodeId());
-            logger.info("path 'finale'");
-            List<NodePortTuple> path = p.getPath();
-            for (int i = 0; i < path.size(); i+=2) {
-                // vado di 2 in 2 perchè il primo è da dove parte e il secondo è dove arriva
-                // noi dobbiamo modificare la table di partenza
-                NodePortTuple node = path.get(i);
-                logger.info(node.toString());
+            
+            for (NodePortTuple node : flow) {
                 this.setFlowToSwitch(node.getNodeId(), node.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+            }
+
+            for (SwitchPort s : dest.getAttachmentPoints()) {
+                if (s.equals(destSwitch)) {
+                    this.setFlowToSwitch(destSwitch.getNodeId(), s.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+                    break;
+                }
             }
 
             c.setPath(sourceIp, destIp);

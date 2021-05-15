@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import org.projectfloodlight.openflow.types.DatapathId;
+import org.restlet.resource.Delete;
 import org.restlet.resource.Post;
 import org.restlet.resource.Put;
 import org.restlet.resource.ServerResource;
@@ -63,4 +64,26 @@ public class NFChainingResource extends ServerResource {
 
       return null;
   }
+  
+  @Delete("delete")
+  public Object delete(String fmJson) {
+      log.info("ASSOCIATE");
+      // we need to associate chain to ip path
+      INFChainingREST nfChainingService = (INFChainingREST)getContext().getAttributes().get(INFChainingREST.class.getCanonicalName());
+      
+      ObjectMapper mapper = new ObjectMapper();
+      try {
+          JsonNode root = mapper.readTree(fmJson);
+
+          String sourceIp = root.get("sourceIp").asText();
+          String destIp = root.get("destIp").asText();
+          
+          return nfChainingService.deletePath(sourceIp, destIp);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }           
+
+      return null;
+  }
+
 }

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.projectfloodlight.openflow.protocol.OFFlowAdd;
+import org.projectfloodlight.openflow.protocol.OFFlowDelete;
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.OFType;
@@ -22,6 +23,7 @@ import org.projectfloodlight.openflow.types.MacAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.VlanVid;
+import org.python.modules.itertools.chain;
 
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IOFMessageListener;
@@ -278,7 +280,15 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
             NFChain c = nfChains.get(nfChainId);
             if (!c.getSouceIp().isEmpty()) {
                 // questa path è stata già configurata oppuew
+                logger.info("chain already used");
                 return false;
+            }
+
+            // se c'è già un flow che fa stesso sourceIp e destIp male
+            for (NFChain chain : nfChains) {
+                if (chain.getSouceIp().equals(sourceIp) && chain.getDestIp().equals(destIp)) {
+                    return false;
+                }
             }
             
             // IDevice source = deviceManager.findDevice(MacAddress.NONE, VlanVid.ZERO, IPv4Address.of(sourceIp), IPv6Address.NONE, DatapathId.NONE, OFPort.ZERO);
@@ -319,24 +329,65 @@ public class NFChaining implements IOFMessageListener, IFloodlightModule, INFCha
                 return false;
             }
             
+            List<DatapathId> switchesUsed = new ArrayList<>();
             
             for (NodePortTuple node : flow) {
                 this.setFlowToSwitch(node.getNodeId(), node.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+                switchesUsed.add(node.getNodeId());
             }
 
             for (SwitchPort s : dest.getAttachmentPoints()) {
                 if (s.equals(destSwitch)) {
                     this.setFlowToSwitch(destSwitch.getNodeId(), s.getPortId(), IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+                    switchesUsed.add(destSwitch.getNodeId());
                     break;
                 }
             }
 
             c.setPath(sourceIp, destIp);
+            c.setSwitchesUsed(switchesUsed);
             return true;
         } catch (Exception e) {
             logger.info("EXCEPTION");
             logger.error(e.getMessage());
             return false;
         }
+    }
+
+    private void deleteFlowToSwitch(DatapathId nodeId, IPv4Address srcIp, IPv4Address destIp) {
+        IOFSwitch sw = switchService.getActiveSwitch(nodeId);
+        OFFlowDelete.Builder fmb = sw.getOFFactory().buildFlowDelete();
+        fmb.setBufferId(OFBufferId.NO_BUFFER)
+            .setPriority(FlowModUtils.PRIORITY_MAX);
+        
+        Match.Builder mb = sw.getOFFactory().buildMatch();
+        mb.setExact(MatchField.ETH_TYPE, EthType.IPv4) // senza questo da errore
+            .setExact(MatchField.IPV4_SRC, srcIp)
+            .setExact(MatchField.IPV4_DST, destIp);
+            
+        fmb.setMatch(mb.build());
+
+        sw.write(fmb.build());
+    }
+
+    @Override
+    public boolean deletePath(String sourceIp, String destIp) {
+        // TODO Auto-generated method stub
+        NFChain chainToDelete = null;
+        for (NFChain chain : nfChains) {
+            if (chain.getSouceIp().equals(sourceIp) && chain.getDestIp().equals(destIp)) {
+                chainToDelete = chain;
+            }
+        }
+        if (chainToDelete == null) {
+            logger.info("no chain associated to dest and source ip");
+            return false;
+        }
+
+        for (DatapathId sw : chainToDelete.getSwitchesUsed()) {
+            this.deleteFlowToSwitch(sw, IPv4Address.of(sourceIp), IPv4Address.of(destIp));
+        }
+        chainToDelete.freePath();
+        return true;
     }
 }

@@ -21,7 +21,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n\t\"nf\": \"firewall2\",\n\t\"sw\": \"00:00:00:00:00:00:00:04\"\n}"
+					"raw": "{\n\t\"nf\": \"firewall5\",\n\t\"sw\": \"00:00:00:00:00:00:00:05\"\n}"
 				},
 				"description": ""
 			},
@@ -41,7 +41,7 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n\t\"chain\": [\"firewall2\"]\n}"
+					"raw": "{\n\t\"chain\": [\"firewall1\", \"firewall3\", \"firewall4\", \"firewall2\", \"firewall5\"]\n}"
 				},
 				"description": ""
 			},
@@ -61,7 +61,27 @@
 				],
 				"body": {
 					"mode": "raw",
-					"raw": "{\n\t\"sourceIp\": \"10.0.0.1\",\n\t\"destIp\": \"10.0.0.3\",\n\t\"nfChainId\": 0\n}"
+					"raw": "{\n\t\"sourceIp\": \"10.0.0.1\",\n\t\"destIp\": \"10.0.0.4\",\n\t\"nfChainId\": 0\n}"
+				},
+				"description": ""
+			},
+			"response": []
+		},
+		{
+			"name": "Delete Chain",
+			"request": {
+				"url": "localhost:8080/wm/nfchain/delete",
+				"method": "DELETE",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"description": ""
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n\t\"sourceIp\": \"10.0.0.1\",\n\t\"destIp\": \"10.0.0.4\"\n}"
 				},
 				"description": ""
 			},
@@ -82,7 +102,7 @@
 			"name": "Check if ip exists",
 			"request": {
 				"url": {
-					"raw": "http://localhost:8080/wm/device/?ipv4=10.0.0.1",
+					"raw": "http://localhost:8080/wm/device/?ipv4=10.0.0.4",
 					"protocol": "http",
 					"host": [
 						"localhost"
@@ -96,7 +116,7 @@
 					"query": [
 						{
 							"key": "ipv4",
-							"value": "10.0.0.1",
+							"value": "10.0.0.4",
 							"equals": true,
 							"description": ""
 						}

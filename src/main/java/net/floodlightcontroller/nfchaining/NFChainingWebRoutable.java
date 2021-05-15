@@ -16,6 +16,7 @@ public class NFChainingWebRoutable implements RestletRoutable {
       router.attach("/nf", NFResource.class);
       router.attach("/define", NFChainingResource.class);
       router.attach("/associate", NFChainingResource.class);
+      router.attach("/delete", NFChainingResource.class);
       return router;
   }
 

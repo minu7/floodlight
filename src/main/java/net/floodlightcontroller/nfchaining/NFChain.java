@@ -1,9 +1,15 @@
 package net.floodlightcontroller.nfchaining;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.projectfloodlight.openflow.types.DatapathId;
+
 public class NFChain {
     private String[] chain;
     private String sourceIp;
     private String destIp;
+    private List<DatapathId> switchesUsed = null;
     
     public NFChain(String[] chain) {
         this.chain = chain; 
@@ -35,5 +41,20 @@ public class NFChain {
     public String[] getNFChain() {
         return chain;
     }
+
+    public void setSwitchesUsed(List<DatapathId> list) {
+        this.switchesUsed = list;
+    }
+
+    public List<DatapathId> getSwitchesUsed() {
+        return this.switchesUsed;
+    }
+
+    public void freePath() {
+        this.sourceIp = "";
+        this.destIp = "";
+        this.switchesUsed = null;
+    }
+
 
 }

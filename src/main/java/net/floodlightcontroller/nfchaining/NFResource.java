@@ -39,7 +39,9 @@ public class NFResource extends ServerResource {
             // non fa un bel to string in automatico, così viene il dpid in modo capibile, direttamente no
             Map<String, DatapathId> map = nfChainingService.associateNfSwitch(nf, sw);
             Map<String, String> res = new HashMap<>();
-
+            if (map == null) {
+              return null;
+            }
             for (Map.Entry<String, DatapathId> m : map.entrySet()) {
               res.put(m.getKey(), m.getValue().toString());
             }

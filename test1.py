@@ -69,7 +69,7 @@ print(response.text)
 
 
 """
-Associate chain errata (ripassiamo da switch)
+Associate seconda chain
 """
 
 url = "http://localhost:8080/wm/nfchain/associate"
